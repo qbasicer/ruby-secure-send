@@ -8,6 +8,6 @@ end
 
 require_relative 'secure_engine.rb'
 
-se = SecureEngine.new
+se = SecureEngine.new({})
 
 se.rx_server

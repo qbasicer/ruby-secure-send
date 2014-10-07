@@ -62,13 +62,20 @@ if (dest == nil || dest.class != String) then
 	raise "Requires a '--dest' argument, exactly once, #{dest}"
 end
 
+if (dest.include?(",")) then
+	dest = dest.split(",")
+	dest.map!{|value|
+		value.chomp
+	}
+end
+
 file = args.extra
 
 if (file.empty? || file.length > 1) then
 	raise "You can only specify one file"
 end
 
-se = SecureEngine.new
+se = SecureEngine.new({})
 
 se.secure_send(dest, file.first)
 
