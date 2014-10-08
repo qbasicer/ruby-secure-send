@@ -96,7 +96,6 @@ class SecureEngine
 		homedir = File.expand_path("~/")
 
 		# Load our private key
-		puts "Loading private key #{@config_file.pri_key}"
 		@private_key = OpenSSL::PKey::RSA.new(File.new(@config_file.pri_key).read)
 
 		# Locate our public key file
@@ -142,6 +141,122 @@ class SecureEngine
 			f.write File.new(@public_key_file).read
 			f.close
 		end
+	end
+
+	def receive_secure_package(input_stream, output_stream)
+		unique = Digest::SHA1.hexdigest "#{Time.now}#{rand}#{@node_name}"
+
+		header = input_stream.read(20)
+		if (!header.start_with?("SECURE_SEND_PACKAGED")) then
+			raise "BAD MAGIC HEADER, got #{header}, #{header.length}"
+		end
+		xfer_file_contents = input_stream.read(512)
+
+		signature = input_stream.read(512)
+
+		xfer_file_contents = @private_key.private_decrypt(xfer_file_contents)
+
+		exchange = Configuration.new
+		exchange.load_string(xfer_file_contents)
+
+		fromkey = exchange.fk
+		key = Base64.decode64(exchange.kf)
+		iv = Base64.decode64(exchange.iv)
+		base_name = exchange.nm
+		sha1 = exchange.s1
+
+		pubkey = get_key_for_dest(fromkey)
+
+		digest = OpenSSL::Digest::SHA256.new
+		verified = pubkey.verify digest, signature, xfer_file_contents
+		raise "Could not verify file contents, signature is invalid!" unless verified
+
+		cipher = OpenSSL::Cipher::AES256.new(:CBC)
+		cipher.decrypt
+		cipher.key = key
+		cipher.iv = iv
+
+		length = 0
+
+		sha256 = Digest::SHA256.new
+		loop do
+			data = input_stream.read(256)
+			break if data.nil?
+			data = cipher.update(data)
+			length += data.length
+			sha256.update(data)
+			output_stream.write(data)
+		end
+
+		data = cipher.final
+		sha256.update(data)
+		output_stream.write(data)
+
+		calculated_sha1 = sha256.hexdigest
+
+		if (calculated_sha1 != sha1) then
+			raise "SHA1 HASH MISMATCH"
+		end
+	end
+
+	def generate_secure_package(dest_key, base_name, data_stream, output_stream)
+		unique = Digest::SHA1.hexdigest "#{base_name}#{Time.now}#{rand}#{@node_name}"
+
+		# Setup symmetric cipher
+		cipher = OpenSSL::Cipher::AES256.new(:CBC)
+		cipher.encrypt
+		key = Base64.encode64(cipher.random_key).chomp
+		iv = Base64.encode64(cipher.random_iv).chomp
+
+		# Stream data into a temporary file
+		tmpfile = "#{unique}.tmp"
+		f = File.new(tmpfile, "w")
+
+		length = 0
+
+		# Calculate rolling sha1
+		sha256 = Digest::SHA256.new
+		loop do
+			data = data_stream.read(256)
+			break if data.nil?
+			length += data.length
+			sha256.update data
+			data = cipher.update(data)
+			f.write(data)
+		end
+		d = cipher.final
+		f.write(d)
+		f.close
+
+		sha1 = sha256.hexdigest
+
+		# Generate exchange data
+		xfer_file_contents = "kf=#{key}\niv=#{iv}\nnm=#{base_name}\ns1=#{sha1}\nfk=#{@node_name}.pub"
+
+		# Generate signature on exchange data
+		digest = OpenSSL::Digest::SHA256.new
+		signature = @private_key.sign(digest, xfer_file_contents)
+
+		# Encrypt exchange data
+		xfer_file_contents = dest_key.public_encrypt(xfer_file_contents)
+
+		# Magic header
+		magic = "SECURE_SEND_PACKAGED"
+
+		# Write our magic, exchange data, and signature to the top of the file
+		output_stream.write(magic)
+		output_stream.write(xfer_file_contents)
+		output_stream.write(signature)
+
+		# Open encrypted transfer file and append it
+		f = File.new(tmpfile, "r")
+		loop do
+			data = f.read(256)
+			break if data.nil?
+			output_stream.write(data)
+		end
+		f.close
+		File.delete(tmpfile)
 	end
 
 	def secure_send(dest, file)
@@ -208,6 +323,19 @@ class SecureEngine
 			raise "Could not load pubkey from #{pubkey}"
 		end
 		pubkey.public_encrypt data
+	end
+
+	def get_key_for_dest(dest)
+		remote_public_key = nil
+		if (dest.end_with?(".pub")) then
+			remote_public_key = "#{@sync_dir}/#{dest}"
+		else
+			remote_public_key = "#{@sync_dir}/#{dest}.pub"
+		end
+		if (!File.exists?(remote_public_key)) then
+			return nil
+		end
+		OpenSSL::PKey::RSA.new(File.read(remote_public_key))
 	end
 
 	def write_secure_metadata_for(target_node, unique, contents, do_sig)
