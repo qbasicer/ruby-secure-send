@@ -187,8 +187,6 @@ class SecureEngine
 	end
 
 	def write_secure_metadata_for(target_node, unique, contents, do_sig)
-		
-
 		dest = target_node.downcase
 		remote_public_key = "#{@sync_dir}/#{dest}.pub"
 		if (!File.exists?(remote_public_key)) then
@@ -198,23 +196,16 @@ class SecureEngine
 		end
 		f = File.open("#{@sync_dir}/#{dest}-#{unique}.smf", "w")
 
+		encoded = Base64.encode64(encrypt_for(contents, remote_public_key)).split("\n").join("")
+		encoded = "contents=#{encoded}"
+
 		if (do_sig) then
 			digest = OpenSSL::Digest::SHA256.new
 			signature = @private_key.sign(digest, contents)
-
-			digest = OpenSSL::Digest::SHA256.new
-			valid = @private_key.public_key.verify(digest, signature, contents)
-			if (!valid) then
-				raise "FAULT"
-			else
-				puts "SIGNATURE VALIDATION OKAY"
-			end
-			contents = encrypt_for(contents, remote_public_key)
-			encoded = Base64.encode64(contents).split("\n").join("")
 			signature = Base64.encode64(signature).split("\n").join("")
-			contents = "SIGNED_METADATA_EXCHANGE\ncontents=#{encoded}\nsignature=#{signature}"
+			contents = "#{encoded}\nsignature=#{signature}"
 		else
-			contents = encrypt_for(contents, remote_public_key)
+			contents = encoded
 		end
 		f.write(contents)
 		f.close
@@ -226,18 +217,12 @@ class SecureEngine
 			if (entry.start_with?(@node_name) && entry.end_with?(".smf")) then
 				start = Time.now
 				unique = Digest::SHA1.hexdigest "#{entry}#{Time.now}"
-											
 				xfer_file_contents = File.new("#{@sync_dir}/#{entry}").read
-				signature = nil
 
-				if (xfer_file_contents.include?("SIGNED_METADATA_EXCHANGE")) then
-					exchange = Configuration.new
-					exchange.load_string(xfer_file_contents)
-
-					contents = exchange.contents
-					signature = Base64.decode64 exchange.signature
-					xfer_file_contents = Base64.decode64 contents
-				end
+				exchange = Configuration.new
+				exchange.load_string(xfer_file_contents)
+				signature = Base64.decode64(exchange.signature)
+				xfer_file_contents = Base64.decode64(exchange.contents)
 
 				begin
 					xfer_file_contents = @private_key.private_decrypt(xfer_file_contents)
