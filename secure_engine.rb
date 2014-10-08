@@ -573,7 +573,7 @@ class SecureEngine
 			end
 
 			# Stub out a configuration file
-			f = File.open(self_config, "w")
+			f = File.open("#{homedir}/.secure/config", "w")
 			f.puts "name=NODE_NAME_HERE"
 			f.puts "pub_key=#{homedir}/.secure/self.pub"
 			f.puts "pri_key=#{homedir}/.secure/self.key"
@@ -596,7 +596,7 @@ class SecureEngine
 			f.close
 
 			# Notify the user they need to configure us
-			raise "No configuration present, please modify #{self_config}"
+			raise "No configuration present, please modify #{homedir}/.secure/config"
 		end
 
 		# Check to see if the configuration is valid
