@@ -143,7 +143,7 @@ class SecureEngine
 		end
 	end
 
-	def receive_secure_package(input_stream, output_stream)
+	def receive_secure_package(pubkey, input_stream, output_stream)
 		start = Time.now
 		unique = Digest::SHA1.hexdigest "#{Time.now}#{rand}#{@node_name}"
 
@@ -166,7 +166,9 @@ class SecureEngine
 		base_name = exchange.nm
 		sha1 = exchange.s1
 
-		pubkey = get_key_for_dest(fromkey)
+		if (!pubkey) then
+			pubkey = get_key_for_dest(fromkey)
+		end
 		if (pubkey) then
 			digest = OpenSSL::Digest::SHA256.new
 			verified = pubkey.verify digest, signature, xfer_file_contents

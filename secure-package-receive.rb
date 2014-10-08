@@ -57,6 +57,9 @@ end
 args = CmdArgs.new
 
 se = SecureEngine.new({})
+input_file = nil
+output_file = nil
+pubkey = nil
 
 if (args["--input"]) then
 	input_file = File.new(args["--input"], "r")
@@ -70,10 +73,14 @@ else
 	output_file = $stdout
 end
 
+if (args["--pubkey"]) then
+	OpenSSL::PKey::RSA.new(File.read(args["--pubkey"]))
+end
+
 okay = true
 
 begin
-	se.receive_secure_package(input_file, output_file)
+	se.receive_secure_package(pubkey, input_file, output_file)
 rescue Exception=>e
 	puts "Receive failed: #{e.inspect}"
 	puts e.backtrace.join("\n\t")
