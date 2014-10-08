@@ -212,11 +212,6 @@ class SecureEngine
 		start = Time.now
 		unique = Digest::SHA1.hexdigest "#{base_name}#{Time.now}#{rand}#{@node_name}"
 
-		data = data_stream.read(256)
-		if (data.nil?) then
-			raise "READ FAULT"
-		end
-
 		# Setup symmetric cipher
 		cipher = OpenSSL::Cipher::AES256.new(:CBC)
 		cipher.encrypt
