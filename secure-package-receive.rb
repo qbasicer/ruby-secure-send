@@ -58,14 +58,14 @@ args = CmdArgs.new
 
 se = SecureEngine.new({})
 
-if (args["-i"]) then
-	input_file = File.new(args["-i"], "r")
+if (args["--input"]) then
+	input_file = File.new(args["--input"], "r")
 else
 	input_file = $stdin
 end
 
-if (args["-o"]) then
-	output_file = File.new(args["-o"], "w")
+if (args["--output"]) then
+	output_file = File.new(args["--output"], "w")
 else
 	output_file = $stdout
 end
@@ -83,7 +83,7 @@ end
 input_file.close
 output_file.close
 
-if (args["-i"]) then
-	File.delete(args["-i"]) unless okay
+if (args["--output"]) then
+	File.delete(args["--output"]) unless okay
 end
 

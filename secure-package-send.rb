@@ -82,16 +82,16 @@ output_file = nil
 input_file = nil
 base_name = nil
 
-if (args["-i"]) then
-	input_file = File.new(args["-i"], "r")
-	base_name = File.basename(args["-i"])
+if (args["--input"]) then
+	input_file = File.new(args["--input"], "r")
+	base_name = File.basename(args["--input"])
 else
 	base_name = "stdin"
 	input_file = $stdin
 end
 
-if (args["-o"]) then
-	output_file = File.new(args["-o"], "w")
+if (args["--output"]) then
+	output_file = File.new(args["--output"], "w")
 else
 	output_file = $stdout
 end

@@ -144,6 +144,7 @@ class SecureEngine
 	end
 
 	def receive_secure_package(input_stream, output_stream)
+		start = Time.now
 		unique = Digest::SHA1.hexdigest "#{Time.now}#{rand}#{@node_name}"
 
 		header = input_stream.read(20)
@@ -166,10 +167,13 @@ class SecureEngine
 		sha1 = exchange.s1
 
 		pubkey = get_key_for_dest(fromkey)
-
-		digest = OpenSSL::Digest::SHA256.new
-		verified = pubkey.verify digest, signature, xfer_file_contents
-		raise "Could not verify file contents, signature is invalid!" unless verified
+		if (pubkey) then
+			digest = OpenSSL::Digest::SHA256.new
+			verified = pubkey.verify digest, signature, xfer_file_contents
+			raise "Could not verify file contents, signature is invalid!" unless verified
+		else
+			$stderr.puts "[WARN] Could not locate pubkey #{fromkey}, file cannot be verified!"
+		end
 
 		cipher = OpenSSL::Cipher::AES256.new(:CBC)
 		cipher.decrypt
@@ -197,10 +201,19 @@ class SecureEngine
 		if (calculated_sha1 != sha1) then
 			raise "SHA1 HASH MISMATCH"
 		end
+		elapsed = Time.now - start
+		puts "Decrypted verified file '#{base_name}' from '#{fromkey}'" if output_stream.class == File
+		puts "Decrypted #{length}B in #{elapsed}s, #{length/elapsed} Bps" if output_stream.class == File
 	end
 
 	def generate_secure_package(dest_key, base_name, data_stream, output_stream)
+		start = Time.now
 		unique = Digest::SHA1.hexdigest "#{base_name}#{Time.now}#{rand}#{@node_name}"
+
+		data = data_stream.read(256)
+		if (data.nil?) then
+			raise "READ FAULT"
+		end
 
 		# Setup symmetric cipher
 		cipher = OpenSSL::Cipher::AES256.new(:CBC)
@@ -212,6 +225,7 @@ class SecureEngine
 		tmpfile = "#{unique}.tmp"
 		f = File.new(tmpfile, "w")
 
+		nextMsg = (1024 * 1024)
 		length = 0
 
 		# Calculate rolling sha1
@@ -257,6 +271,9 @@ class SecureEngine
 		end
 		f.close
 		File.delete(tmpfile)
+
+		elapsed = Time.now - start
+		puts "Encrypted #{length}B in #{elapsed}s, #{length/elapsed} Bps" if output_stream.class == File
 	end
 
 	def secure_send(dest, file)
