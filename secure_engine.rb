@@ -216,131 +216,127 @@ class SecureEngine
 		else
 			contents = encrypt_for(contents, remote_public_key)
 		end
-		f.write (contents)
+		f.write(contents)
 		f.close
+	end
+
+	def scan_incoming
+		entries = Dir.entries(@sync_dir)
+		entries.each{|entry|
+			if (entry.start_with?(@node_name) && entry.end_with?(".smf")) then
+				start = Time.now
+				unique = Digest::SHA1.hexdigest "#{entry}#{Time.now}"
+											
+				xfer_file_contents = File.new("#{@sync_dir}/#{entry}").read
+				signature = nil
+
+				if (xfer_file_contents.include?("SIGNED_METADATA_EXCHANGE")) then
+					exchange = Configuration.new
+					exchange.load_string(xfer_file_contents)
+
+					contents = exchange.contents
+					signature = Base64.decode64 exchange.signature
+					xfer_file_contents = Base64.decode64 contents
+				end
+
+				begin
+					xfer_file_contents = @private_key.private_decrypt(xfer_file_contents)
+				rescue OpenSSL::PKey::RSAError=>e
+					puts "ERROR DECRYPTING #{entry}, #{e.class} - #{e.message}"
+					puts "\t#{e.backtrace.join("\n\t")}"
+					next
+				end
+
+				key = nil
+				iv = nil
+				name = nil
+				file = nil
+				tsha1 = nil
+				sha1 = nil
+				
+				fromkey = nil
+				verified = false
+				xfer_file_contents.split("\n").each{|line|
+					if (line.include?("=")) then
+						idx = line.index("=")
+						var = line[0..idx-1].chomp
+						val = line[idx+1..-1].chomp
+						if (var == "kf") then
+							key = Base64.decode64 val
+						elsif (var == "iv") then
+							iv = Base64.decode64 val
+						elsif (var == "nm") then
+							name = val
+						elsif (var == "fe") then
+							file = val
+						elsif (var == "s1") then
+							tsha1 = val
+						elsif (var == "sf") then
+							signature_file = val
+						elsif (var == "fk") then
+							fromkey = val
+						end
+					end
+				}
+
+				raise "Missing key" if key.nil?
+				raise "Missing iv" if iv.nil?
+				raise "Missing name" if name.nil?
+				raise "Missing file" if file.nil?
+				raise "Missing sha1" if tsha1.nil?
+
+				if (File.exists?("#{@sync_dir}/#{file}")) then
+					puts "Receiving file #{@inbox}/#{name}"
+
+					File.rename("#{@sync_dir}/#{entry}", "#{@tmpdir}/#{unique}.smf")
+					file_contents = File.new("#{@sync_dir}/#{file}").read
+					cipher = OpenSSL::Cipher::AES256.new(:CBC)
+					cipher.decrypt
+					cipher.key = key
+					cipher.iv = iv
+					file_contents = cipher.update(file_contents) + cipher.final
+					if (tsha1 != nil) then
+						sha1 = Digest::SHA1.hexdigest file_contents
+						if (tsha1 != sha1) then
+							raise "Calculated sha1 #{sha1} does not match expected sha1 #{tsha1}"
+						end
+					end
+					if (fromkey != nil && signature != nil) then
+						pubkey = OpenSSL::PKey::RSA.new(File.read("#{@sync_dir}/#{fromkey}"))
+						if (pubkey) then
+							digest = OpenSSL::Digest::SHA256.new
+							verified = pubkey.verify digest, signature, xfer_file_contents
+							if (!verified) then
+								raise "[FATAL] Could not verify sender key, signatures do not match"
+							end
+						else
+							puts "[ERROR] Could not load pubkey #{@sync_dir}/#{fromkey}, cannot verify sender"
+						end
+					else
+						puts "[WARN] Sender didn't sign data, cannot verify sender"
+					end
+
+					f = File.open("#{@inbox}/#{name}", "w")
+					f.write file_contents
+					f.close
+
+					#File.delete "#{@sync_dir}/#{file}"
+					File.delete "#{@tmpdir}/#{unique}.smf"
+					start = Time.now - start
+					
+					puts "Received file #{@inbox}/#{name} - #{sha1} @ #{Time.now} - #{start}s - verified: #{verified}"
+					
+					gc_dir
+				end
+			end
+		}
 	end
 
 	def rx_server
 		gc_dir
 		t = Thread.new{
 			loop do
-				entries = Dir.entries(@sync_dir)
-				entries.each{|entry|
-					if (entry.start_with?(@node_name) && entry.end_with?(".smf")) then
-					
-						puts "TDIFF: #{Time.now - File.mtime("#{@sync_dir}/#{entry}")}"
-						start = Time.now
-						unique = Digest::SHA1.hexdigest "#{entry}#{Time.now}"
-													
-						xfer_file_contents = File.new("#{@sync_dir}/#{entry}").read
-						signature = nil
-
-						if (xfer_file_contents.include?("SIGNED_METADATA_EXCHANGE")) then
-							puts "FILE:"
-							puts xfer_file_contents
-							puts 
-							puts
-							puts "File is signed (in theory)"
-							exchange = Configuration.new
-							exchange.load_string(xfer_file_contents)
-
-							contents = exchange.contents
-							signature = Base64.decode64 exchange.signature
-							xfer_file_contents = Base64.decode64 contents
-						end
-
-						begin
-							xfer_file_contents = @private_key.private_decrypt(xfer_file_contents)
-						rescue OpenSSL::PKey::RSAError=>e
-							puts "ERROR DECRYPTING #{entry}, #{e.class} - #{e.message}"
-							puts "\t#{e.backtrace.join("\n\t")}"
-							next
-						end
-
-						key = nil
-						iv = nil
-						name = nil
-						file = nil
-						tsha1 = nil
-						sha1 = nil
-						
-						fromkey = nil
-						verified = false
-						xfer_file_contents.split("\n").each{|line|
-							if (line.include?("=")) then
-								idx = line.index("=")
-								var = line[0..idx-1].chomp
-								val = line[idx+1..-1].chomp
-								if (var == "kf") then
-									key = Base64.decode64 val
-								elsif (var == "iv") then
-									iv = Base64.decode64 val
-								elsif (var == "nm") then
-									name = val
-								elsif (var == "fe") then
-									file = val
-								elsif (var == "s1") then
-									tsha1 = val
-								elsif (var == "sf") then
-									signature_file = val
-								elsif (var == "fk") then
-									fromkey = val
-								end
-							end
-						}
-
-						raise "Missing key" if key.nil?
-						raise "Missing iv" if iv.nil?
-						raise "Missing name" if name.nil?
-						raise "Missing file" if file.nil?
-
-						if (File.exists?("#{@sync_dir}/#{file}")) then
-							puts "Receiving file #{@inbox}/#{name}"
-
-							File.rename("#{@sync_dir}/#{entry}", "#{@tmpdir}/#{unique}.smf")
-							file_contents = File.new("#{@sync_dir}/#{file}").read
-							cipher = OpenSSL::Cipher::AES256.new(:CBC)
-							cipher.decrypt
-							cipher.key = key
-							cipher.iv = iv
-							file_contents = cipher.update(file_contents) + cipher.final
-							if (tsha1 != nil) then
-								sha1 = Digest::SHA1.hexdigest file_contents
-								if (tsha1 != sha1) then
-									puts "Calculated sha1 #{sha1} does not match expected sha1 #{tsha1}"
-								end
-							end
-							if (fromkey != nil && signature != nil) then
-								pubkey = OpenSSL::PKey::RSA.new(File.read("#{@sync_dir}/#{fromkey}"))
-								if (pubkey) then
-									digest = OpenSSL::Digest::SHA256.new
-									verified = pubkey.verify digest, signature, xfer_file_contents
-									if (!verified) then
-										raise "[FATAL] Could not verify sender key, signatures do not match"
-									end
-								else
-									puts "[ERROR] Could not load pubkey #{@sync_dir}/#{fromkey}"
-								end
-							else
-								puts "[WARN] Sender didn't sign data"
-							end
-
-							f = File.open("#{@inbox}/#{name}", "w")
-							f.write file_contents
-							f.close
-
-							#File.delete "#{@sync_dir}/#{file}"
-							File.delete "#{@tmpdir}/#{unique}.smf"
-							start = Time.now - start
-							if (sha1) then
-								puts "Received file #{@inbox}/#{name} - #{sha1} @ #{Time.now} - #{start}s - verified: #{verified}"
-							else
-								puts "Received file #{@inbox}/#{name} @ #{Time.now} - #{start}s - verified: #{verified}"
-							end
-							gc_dir
-						end
-					end
-				}
+				scan_incoming
 
 				sleep(5)
 			end
